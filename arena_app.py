@@ -10,9 +10,9 @@ CLIP_API_URL = "https://hf.space/embed/chatgpt-openai/clip-score/+/api/predict"
 HUGGINGFACE_API_TOKEN = st.secrets["HUGGINGFACE_API_TOKEN"]
 
 headers_hf = {
-    "Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}",
     "Content-Type": "application/json"
 }
+
 
 def get_clip_score(image_bytes, prompt, retries=3, delay=2):
     for attempt in range(retries):
