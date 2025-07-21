@@ -1,11 +1,11 @@
 import streamlit as st
 import requests
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from io import BytesIO
 import base64
 import time
 
-# ✅ Working CLIP Inference API hosted on Hugging Face
+# ✅ Custom deployed CLIP API
 CLIP_API_URL = "https://hf.space/embed/chatgpt-openai/clip-score/+/api/predict"
 HUGGINGFACE_API_TOKEN = st.secrets["HUGGINGFACE_API_TOKEN"]
 
@@ -51,27 +51,29 @@ def get_blocks_from_channel(slug, max_blocks=20):
 # --- UI ---
 st.set_page_config(page_title="Are.na CLIP Search", layout="wide")
 st.title("🔍 Are.na Visual Search (CLIP-powered)")
-st.markdown("Find Are.na images that visually match your concept using CLIP.")
+st.markdown("Find images on Are.na that visually match your concept using CLIP.")
 
 keyword = st.text_input("Enter a visual concept (e.g. 'poster', 'fruit', 'zine')")
 threshold = st.slider("Minimum CLIP match score", 0.1, 0.5, 0.28, step=0.01)
 
-# 🧪 TEST MODE
+# 🧪 Test mode
 with st.expander("🧪 Test CLIP with watermelon image"):
     if st.button("Run test match"):
         test_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Watermelon_cross_BNC.jpg/640px-Watermelon_cross_BNC.jpg"
         img_response = requests.get(test_url)
         score = get_clip_score(img_response.content, "watermelon")
-        st.image(img_response.content, caption=f"CLIP Score: {score:.2f}")
-        if score < threshold:
-            st.warning("The model may be cold or overloaded. Try again or lower the threshold.")
+        try:
+            img = Image.open(BytesIO(img_response.content))
+            st.image(img, caption=f"CLIP Score: {score:.2f}")
+        except UnidentifiedImageError:
+            st.warning("⚠️ Failed to display test image. Format not recognized.")
 
-# 🔍 SEARCH MODE
+# 🔍 Search mode
 if st.button("Search Are.na"):
     if not keyword:
         st.warning("Please enter a keyword.")
     else:
-        st.info(f"Searching Are.na visually for: **{keyword}** (CLIP ≥ {threshold:.2f})")
+        st.info(f"Searching visually for: **{keyword}** (CLIP ≥ {threshold:.2f})")
         try:
             channels = search_arena_channels(keyword)
             cols = st.columns(5)
@@ -86,7 +88,7 @@ if st.button("Search Are.na"):
                             img_url = block["image"]["original"]["url"]
                             img_response = requests.get(img_url, headers={"User-Agent": "Mozilla/5.0"})
 
-                            # Skip if not a real image
+                            # ✅ Skip non-image content
                             if not img_response.headers.get("Content-Type", "").startswith("image/"):
                                 continue
 
@@ -102,15 +104,15 @@ if st.button("Search Are.na"):
                                     col_idx = (col_idx + 1) % 5
                                     match_count += 1
                                 except Exception as e:
-                                    st.warning(f"⚠️ Skipped a bad image. Reason: {e}")
+                                    st.warning(f"⚠️ Image skipped (decode error): {e}")
                                     continue
 
                         except Exception as e:
-                            st.warning(f"⚠️ Failed to fetch image: {e}")
+                            st.warning(f"⚠️ Failed to load image: {e}")
                             continue
 
             if match_count == 0:
                 st.warning("No visually matching images found. Try a broader keyword or lower threshold.")
 
         except Exception as e:
-            st.error(f"❌ Error: {e}")
+            st.error(f"❌ Search failed: {e}")
