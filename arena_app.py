@@ -5,8 +5,7 @@ from io import BytesIO
 import base64
 import time
 
-# ✅ CLIP model endpoint (official, stable, authenticated)
-CLIP_API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/clip-ViT-B-32"
+CLIP_API_URL = "https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32"
 HUGGINGFACE_API_TOKEN = st.secrets["HUGGINGFACE_API_TOKEN"]
 
 headers_hf = {
@@ -33,65 +32,39 @@ def get_clip_score(image_bytes, prompt, retries=2, delay=1):
         time.sleep(delay)
     return 0.0
 
-def search_arena_channels(keyword, max_channels=5):
+def search_arena_channels(keyword):
     resp = requests.get(f"https://api.are.na/v2/search/channels?q={keyword}", headers={"User-Agent":"Mozilla/5.0"})
     resp.raise_for_status()
-    return resp.json().get("channels", [])[:max_channels]
+    return resp.json().get("channels", [])[:5]
 
-def get_blocks_from_channel(slug, max_blocks=20):
+def get_blocks_from_channel(slug):
     resp = requests.get(f"https://api.are.na/v2/channels/{slug}/contents", headers={"User-Agent":"Mozilla/5.0"})
     resp.raise_for_status()
-    return resp.json().get("contents", [])[:max_blocks]
+    return resp.json().get("contents", [])[:20]
 
-# --- UI ---
+# UI
 st.set_page_config(page_title="Are.na Visual Search (CLIP)", layout="wide")
-st.title("🔍 Are.na Visual Search (CLIP-powered)")
-st.write("Type a keyword, test CLIP, then see only visually matching images!")
+st.title("🔍 Are.na Visual Search")
+keyword = st.text_input("Keyword")
+threshold = st.slider("Min visual match score", 0.1, 1.0, 0.3, 0.05)
 
-keyword = st.text_input("Keyword (e.g., 'watermelon', 'poster', 'zine')")
-threshold = st.slider("Min visual match score", min_value=0.1, max_value=1.0, value=0.3, step=0.01)
-
-# --- Test Button ---
-with st.expander("🧪 Test CLIP with known image"):
+with st.expander("🧪 Test CLIP"):
     if st.button("Run test with watermelon"):
-        resp = requests.get("https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Watermelon_cross_BNC.jpg/640px-Watermelon_cross_BNC.jpg")
+        resp = requests.get("https://upload.wikimedia.org/.../Watermelon_cross_BNC.jpg")
         score = get_clip_score(resp.content, "watermelon")
         try:
             img = Image.open(BytesIO(resp.content))
-            st.image(img, caption=f"CLIP Score: {score:.2f}")
+            st.image(img, caption=f"Score: {score:.2f}")
         except UnidentifiedImageError:
-            st.warning("⚠️ Couldn't decode test image.")
+            st.warning("⚠️ Can't display test image")
 
-# --- Main Search ---
 if st.button("Search Are.na"):
     if not keyword:
-        st.warning("Please enter a keyword.")
+        st.warning("Enter a keyword")
     else:
-        st.info(f"Searching for images visually similar to: **{keyword}**")
         cols = st.columns(5)
         idx = 0
         matches = 0
-
         for ch in search_arena_channels(keyword):
             for block in get_blocks_from_channel(ch["slug"]):
-                if block.get("class") != "Image":
-                    continue
-                try:
-                    img_url = block["image"]["original"]["url"]
-                    resp = requests.get(img_url, headers={"User-Agent":"Mozilla/5.0"}, timeout=15)
-                    if not resp.headers.get("Content-Type","").startswith("image/"):
-                        continue
-                    img_bytes = resp.content
-                    score = get_clip_score(img_bytes, keyword)
-                    if score >= threshold:
-                        img = Image.open(BytesIO(img_bytes))
-                        title = block.get("title","")
-                        caption = title + f"\nScore: {score:.2f}" if title else f"Score: {score:.2f}"
-                        cols[idx % 5].image(img, caption=caption, use_column_width=True)
-                        idx += 1
-                        matches += 1
-                except Exception:
-                    continue
-
-        if matches == 0:
-            st.warning("No matches found. Try a broader keyword or lower threshold.")
+                if block.get("class")
