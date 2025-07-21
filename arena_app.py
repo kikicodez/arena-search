@@ -5,27 +5,30 @@ from io import BytesIO
 import base64
 import time
 
-# ✅ Public CLIP endpoint (no token needed)
-CLIP_API_URL = "https://hf.space/embed/chatgpt-openai/clip-score/+/api/predict"
+# ✅ Final working CLIP API (Hugging Face official)
+CLIP_API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/clip-ViT-B-32"
+HUGGINGFACE_API_TOKEN = st.secrets["HUGGINGFACE_API_TOKEN"]
 
 headers_hf = {
+    "Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}",
     "Content-Type": "application/json"
 }
 
-def get_clip_score(image_bytes, prompt, retries=3, delay=2):
-    for attempt in range(retries):
+def get_clip_score(image_bytes, prompt, retries=2, delay=1):
+    encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+    payload = {
+        "inputs": {
+            "image": encoded_image,
+            "text": prompt
+        }
+    }
+    for _ in range(retries):
         try:
-            encoded_image = base64.b64encode(image_bytes).decode("utf-8")
-            payload = {
-                "data": [encoded_image, prompt]
-            }
-            response = requests.post(CLIP_API_URL, headers=headers_hf, json=payload)
-            if response.status_code == 200:
-                result = response.json()
-                score = result.get("data", [0.0])[0]
-                return score
+            resp = requests.post(CLIP_API_URL, headers=headers_hf, json=payload)
+            if resp.status_code == 200:
+                return resp.json()[0]["score"]
             else:
-                st.warning(f"CLIP error (status {response.status_code}): {response.text}")
+                st.warning(f"CLIP error {resp.status_code}: {resp.text}")
         except Exception as e:
             st.warning(f"CLIP exception: {e}")
         time.sleep(delay)
@@ -49,10 +52,10 @@ def get_blocks_from_channel(slug, max_blocks=20):
 # --- UI ---
 st.set_page_config(page_title="Are.na CLIP Search", layout="wide")
 st.title("🔍 Are.na Visual Search (CLIP-powered)")
-st.markdown("Find images on Are.na that visually match your concept using CLIP.")
+st.markdown("Find Are.na images that visually match your concept using CLIP.")
 
 keyword = st.text_input("Enter a visual concept (e.g. 'poster', 'fruit', 'zine')")
-threshold = st.slider("Minimum CLIP match score", 0.1, 0.5, 0.28, step=0.01)
+threshold = st.slider("Minimum CLIP match score", 0.1, 1.0, 0.3, step=0.01)
 
 # 🧪 Test mode
 with st.expander("🧪 Test CLIP with watermelon image"):
@@ -64,7 +67,7 @@ with st.expander("🧪 Test CLIP with watermelon image"):
             img = Image.open(BytesIO(img_response.content))
             st.image(img, caption=f"CLIP Score: {score:.2f}")
         except UnidentifiedImageError:
-            st.warning("⚠️ Failed to display test image. Format not recognized.")
+            st.warning("⚠️ Could not decode test image.")
 
 # 🔍 Search mode
 if st.button("Search Are.na"):
@@ -101,7 +104,7 @@ if st.button("Search Are.na"):
                                     col_idx = (col_idx + 1) % 5
                                     match_count += 1
                                 except Exception as e:
-                                    st.warning(f"⚠️ Image skipped: {e}")
+                                    st.warning(f"⚠️ Skipped bad image: {e}")
                                     continue
 
                         except Exception as e:
