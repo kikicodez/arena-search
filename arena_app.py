@@ -63,11 +63,11 @@ with st.expander("🧪 Test CLIP with watermelon image"):
         test_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Watermelon_cross_BNC.jpg/640px-Watermelon_cross_BNC.jpg"
         img_response = requests.get(test_url)
         score = get_clip_score(img_response.content, "watermelon")
-        try:
-            img = Image.open(BytesIO(img_response.content))
-            st.image(img, caption=f"CLIP Score: {score:.2f}")
-        except UnidentifiedImageError:
-            st.warning("⚠️ Could not decode test image.")
+     try:
+    img = Image.open(BytesIO(img_response.content))
+    st.image(img, caption=f"CLIP Score: {score:.2f}")
+except UnidentifiedImageError:
+    st.warning("⚠️ Could not display test image. Format not recognized.")
 
 # 🔍 Search mode
 if st.button("Search Are.na"):
