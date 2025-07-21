@@ -62,8 +62,8 @@ with st.expander("🧪 Test CLIP with watermelon image"):
     if st.button("Run test match"):
         test_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Watermelon_cross_BNC.jpg/640px-Watermelon_cross_BNC.jpg"
         img_response = requests.get(test_url)
-        score = get_clip_score(img_response.content, "watermelon")
-     try:
+     score = get_clip_score(img_response.content, "watermelon")
+try:
     img = Image.open(BytesIO(img_response.content))
     st.image(img, caption=f"CLIP Score: {score:.2f}")
 except UnidentifiedImageError:
