@@ -5,14 +5,12 @@ from io import BytesIO
 import base64
 import time
 
-# ✅ Custom deployed CLIP API
+# ✅ Public CLIP endpoint (no token needed)
 CLIP_API_URL = "https://hf.space/embed/chatgpt-openai/clip-score/+/api/predict"
-HUGGINGFACE_API_TOKEN = st.secrets["HUGGINGFACE_API_TOKEN"]
 
 headers_hf = {
     "Content-Type": "application/json"
 }
-
 
 def get_clip_score(image_bytes, prompt, retries=3, delay=2):
     for attempt in range(retries):
@@ -88,7 +86,6 @@ if st.button("Search Are.na"):
                             img_url = block["image"]["original"]["url"]
                             img_response = requests.get(img_url, headers={"User-Agent": "Mozilla/5.0"})
 
-                            # ✅ Skip non-image content
                             if not img_response.headers.get("Content-Type", "").startswith("image/"):
                                 continue
 
@@ -104,7 +101,7 @@ if st.button("Search Are.na"):
                                     col_idx = (col_idx + 1) % 5
                                     match_count += 1
                                 except Exception as e:
-                                    st.warning(f"⚠️ Image skipped (decode error): {e}")
+                                    st.warning(f"⚠️ Image skipped: {e}")
                                     continue
 
                         except Exception as e:
