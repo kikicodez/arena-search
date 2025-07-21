@@ -2,77 +2,115 @@ import streamlit as st
 import requests
 from PIL import Image
 from io import BytesIO
-import os
-import csv
+import base64
+import time
 
-SAVE_DIR = "arena_images"
-CSV_PATH = os.path.join(SAVE_DIR, "metadata.csv")
+# ✅ Working CLIP Inference API hosted on Hugging Face
+CLIP_API_URL = "https://hf.space/embed/chatgpt-openai/clip-score/+/api/predict"
+HUGGINGFACE_API_TOKEN = st.secrets["HUGGINGFACE_API_TOKEN"]
 
-# Utilities
+headers_hf = {
+    "Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}",
+    "Content-Type": "application/json"
+}
+
+def get_clip_score(image_bytes, prompt, retries=3, delay=2):
+    for attempt in range(retries):
+        try:
+            encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+            payload = {
+                "data": [encoded_image, prompt]
+            }
+            response = requests.post(CLIP_API_URL, headers=headers_hf, json=payload)
+            if response.status_code == 200:
+                result = response.json()
+                score = result.get("data", [0.0])[0]
+                return score
+            else:
+                st.warning(f"CLIP error (status {response.status_code}): {response.text}")
+        except Exception as e:
+            st.warning(f"CLIP exception: {e}")
+        time.sleep(delay)
+    return 0.0
+
+# --- Are.na API ---
 def search_arena_channels(keyword, max_channels=5):
     url = f"https://api.are.na/v2/search/channels?q={keyword}"
-    response = requests.get(url)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
     response.raise_for_status()
     return response.json()['channels'][:max_channels]
 
-def get_blocks_from_channel(slug, max_blocks=10):
+def get_blocks_from_channel(slug, max_blocks=20):
     url = f"https://api.are.na/v2/channels/{slug}/contents"
-    response = requests.get(url)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
     response.raise_for_status()
     return response.json()['contents'][:max_blocks]
 
-def save_image(img_url, title, note, metadata_rows):
-    if not os.path.exists(SAVE_DIR):
-        os.makedirs(SAVE_DIR)
-    img_data = requests.get(img_url).content
-    img_name = img_url.split("/")[-1]
-    img_path = os.path.join(SAVE_DIR, img_name)
-    with open(img_path, "wb") as f:
-        f.write(img_data)
-    metadata_rows.append([img_name, title, note, img_url])
-    return img_data, img_name
+# --- UI ---
+st.set_page_config(page_title="Are.na CLIP Search", layout="wide")
+st.title("🔍 Are.na Visual Search (CLIP-powered)")
+st.markdown("Find Are.na images that visually match your concept using CLIP.")
 
-def save_csv(metadata_rows):
-    with open(CSV_PATH, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(["Image Name", "Title", "Note", "Image URL"])
-        writer.writerows(metadata_rows)
+keyword = st.text_input("Enter a visual concept (e.g. 'poster', 'fruit', 'zine')")
+threshold = st.slider("Minimum CLIP match score", 0.1, 0.5, 0.28, step=0.01)
 
-# UI
-st.title("📡 Are.na Image Fetcher")
+# 🧪 TEST MODE
+with st.expander("🧪 Test CLIP with watermelon image"):
+    if st.button("Run test match"):
+        test_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Watermelon_cross_BNC.jpg/640px-Watermelon_cross_BNC.jpg"
+        img_response = requests.get(test_url)
+        score = get_clip_score(img_response.content, "watermelon")
+        st.image(img_response.content, caption=f"CLIP Score: {score:.2f}")
+        if score < threshold:
+            st.warning("The model may be cold or overloaded. Try again or lower the threshold.")
 
-keyword = st.text_input("Enter keyword to search Are.na channels")
-
-if st.button("Search and Download"):
+# 🔍 SEARCH MODE
+if st.button("Search Are.na"):
     if not keyword:
         st.warning("Please enter a keyword.")
     else:
-        st.info(f"Searching channels for: **{keyword}**")
-        metadata_rows = []
-
+        st.info(f"Searching Are.na visually for: **{keyword}** (CLIP ≥ {threshold:.2f})")
         try:
             channels = search_arena_channels(keyword)
+            cols = st.columns(5)
+            col_idx = 0
+            match_count = 0
+
             for channel in channels:
-                st.subheader(f"📁 {channel['title']}")
-                blocks = get_blocks_from_channel(channel['slug'])
-                cols = st.columns(5)  # grid layout
-                col_idx = 0
-
+                blocks = get_blocks_from_channel(channel["slug"])
                 for block in blocks:
-                    if block['class'] == 'Image':
-                        img_url = block['image']['original']['url']
-                        title = block.get('title', '[No Title]')
-                        note = block.get('description', '[No Description]')
+                    if block.get("class") == "Image":
+                        try:
+                            img_url = block["image"]["original"]["url"]
+                            img_response = requests.get(img_url, headers={"User-Agent": "Mozilla/5.0"})
 
-                        img_data, img_name = save_image(img_url, title, note, metadata_rows)
-                        img = Image.open(BytesIO(img_data))
-                        cols[col_idx].image(img, caption=title, use_column_width=True)
-                        col_idx = (col_idx + 1) % 5
+                            # Skip if not a real image
+                            if not img_response.headers.get("Content-Type", "").startswith("image/"):
+                                continue
 
-            save_csv(metadata_rows)
-            st.success("✅ Done! Metadata saved.")
-            with open(CSV_PATH, "rb") as f:
-                st.download_button("📄 Download Metadata CSV", f, file_name="arena_metadata.csv")
+                            img_bytes = img_response.content
+                            score = get_clip_score(img_bytes, keyword)
+
+                            if score >= threshold:
+                                try:
+                                    img = Image.open(BytesIO(img_bytes))
+                                    title = block.get("title", "")
+                                    caption = f"{title}\nScore: {score:.2f}" if title else f"Score: {score:.2f}"
+                                    cols[col_idx].image(img, caption=caption, use_column_width=True)
+                                    col_idx = (col_idx + 1) % 5
+                                    match_count += 1
+                                except Exception as e:
+                                    st.warning(f"⚠️ Skipped a bad image. Reason: {e}")
+                                    continue
+
+                        except Exception as e:
+                            st.warning(f"⚠️ Failed to fetch image: {e}")
+                            continue
+
+            if match_count == 0:
+                st.warning("No visually matching images found. Try a broader keyword or lower threshold.")
 
         except Exception as e:
-            st.error(f"⚠️ Error: {e}")
+            st.error(f"❌ Error: {e}")
