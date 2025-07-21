@@ -5,7 +5,7 @@ from io import BytesIO
 import base64
 import time
 
-# ✅ Final working CLIP API (Hugging Face official)
+# ✅ CLIP model endpoint (official, stable, authenticated)
 CLIP_API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/clip-ViT-B-32"
 HUGGINGFACE_API_TOKEN = st.secrets["HUGGINGFACE_API_TOKEN"]
 
@@ -15,18 +15,17 @@ headers_hf = {
 }
 
 def get_clip_score(image_bytes, prompt, retries=2, delay=1):
-    encoded_image = base64.b64encode(image_bytes).decode("utf-8")
     payload = {
         "inputs": {
-            "image": encoded_image,
+            "image": base64.b64encode(image_bytes).decode("utf-8"),
             "text": prompt
         }
     }
     for _ in range(retries):
         try:
-            resp = requests.post(CLIP_API_URL, headers=headers_hf, json=payload)
-            if resp.status_code == 200:
-                return resp.json()[0]["score"]
+            resp = requests.post(CLIP_API_URL, headers=headers_hf, json=payload, timeout=30)
+            if resp.status_code == 200 and isinstance(resp.json(), list):
+                return resp.json()[0].get("score", 0.0)
             else:
                 st.warning(f"CLIP error {resp.status_code}: {resp.text}")
         except Exception as e:
@@ -34,85 +33,65 @@ def get_clip_score(image_bytes, prompt, retries=2, delay=1):
         time.sleep(delay)
     return 0.0
 
-# --- Are.na API ---
 def search_arena_channels(keyword, max_channels=5):
-    url = f"https://api.are.na/v2/search/channels?q={keyword}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    return response.json()['channels'][:max_channels]
+    resp = requests.get(f"https://api.are.na/v2/search/channels?q={keyword}", headers={"User-Agent":"Mozilla/5.0"})
+    resp.raise_for_status()
+    return resp.json().get("channels", [])[:max_channels]
 
 def get_blocks_from_channel(slug, max_blocks=20):
-    url = f"https://api.are.na/v2/channels/{slug}/contents"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    return response.json()['contents'][:max_blocks]
+    resp = requests.get(f"https://api.are.na/v2/channels/{slug}/contents", headers={"User-Agent":"Mozilla/5.0"})
+    resp.raise_for_status()
+    return resp.json().get("contents", [])[:max_blocks]
 
 # --- UI ---
-st.set_page_config(page_title="Are.na CLIP Search", layout="wide")
+st.set_page_config(page_title="Are.na Visual Search (CLIP)", layout="wide")
 st.title("🔍 Are.na Visual Search (CLIP-powered)")
-st.markdown("Find Are.na images that visually match your concept using CLIP.")
+st.write("Type a keyword, test CLIP, then see only visually matching images!")
 
-keyword = st.text_input("Enter a visual concept (e.g. 'poster', 'fruit', 'zine')")
-threshold = st.slider("Minimum CLIP match score", 0.1, 1.0, 0.3, step=0.01)
+keyword = st.text_input("Keyword (e.g., 'watermelon', 'poster', 'zine')")
+threshold = st.slider("Min visual match score", min_value=0.1, max_value=1.0, value=0.3, step=0.01)
 
-# 🧪 Test mode
-with st.expander("🧪 Test CLIP with watermelon image"):
-    if st.button("Run test match"):
-        test_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Watermelon_cross_BNC.jpg/640px-Watermelon_cross_BNC.jpg"
-        img_response = requests.get(test_url)
-     score = get_clip_score(img_response.content, "watermelon")
-try:
-    img = Image.open(BytesIO(img_response.content))
-    st.image(img, caption=f"CLIP Score: {score:.2f}")
-except UnidentifiedImageError:
-    st.warning("⚠️ Could not display test image. Format not recognized.")
+# --- Test Button ---
+with st.expander("🧪 Test CLIP with known image"):
+    if st.button("Run test with watermelon"):
+        resp = requests.get("https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Watermelon_cross_BNC.jpg/640px-Watermelon_cross_BNC.jpg")
+        score = get_clip_score(resp.content, "watermelon")
+        try:
+            img = Image.open(BytesIO(resp.content))
+            st.image(img, caption=f"CLIP Score: {score:.2f}")
+        except UnidentifiedImageError:
+            st.warning("⚠️ Couldn't decode test image.")
 
-# 🔍 Search mode
+# --- Main Search ---
 if st.button("Search Are.na"):
     if not keyword:
         st.warning("Please enter a keyword.")
     else:
-        st.info(f"Searching visually for: **{keyword}** (CLIP ≥ {threshold:.2f})")
-        try:
-            channels = search_arena_channels(keyword)
-            cols = st.columns(5)
-            col_idx = 0
-            match_count = 0
+        st.info(f"Searching for images visually similar to: **{keyword}**")
+        cols = st.columns(5)
+        idx = 0
+        matches = 0
 
-            for channel in channels:
-                blocks = get_blocks_from_channel(channel["slug"])
-                for block in blocks:
-                    if block.get("class") == "Image":
-                        try:
-                            img_url = block["image"]["original"]["url"]
-                            img_response = requests.get(img_url, headers={"User-Agent": "Mozilla/5.0"})
+        for ch in search_arena_channels(keyword):
+            for block in get_blocks_from_channel(ch["slug"]):
+                if block.get("class") != "Image":
+                    continue
+                try:
+                    img_url = block["image"]["original"]["url"]
+                    resp = requests.get(img_url, headers={"User-Agent":"Mozilla/5.0"}, timeout=15)
+                    if not resp.headers.get("Content-Type","").startswith("image/"):
+                        continue
+                    img_bytes = resp.content
+                    score = get_clip_score(img_bytes, keyword)
+                    if score >= threshold:
+                        img = Image.open(BytesIO(img_bytes))
+                        title = block.get("title","")
+                        caption = title + f"\nScore: {score:.2f}" if title else f"Score: {score:.2f}"
+                        cols[idx % 5].image(img, caption=caption, use_column_width=True)
+                        idx += 1
+                        matches += 1
+                except Exception:
+                    continue
 
-                            if not img_response.headers.get("Content-Type", "").startswith("image/"):
-                                continue
-
-                            img_bytes = img_response.content
-                            score = get_clip_score(img_bytes, keyword)
-
-                            if score >= threshold:
-                                try:
-                                    img = Image.open(BytesIO(img_bytes))
-                                    title = block.get("title", "")
-                                    caption = f"{title}\nScore: {score:.2f}" if title else f"Score: {score:.2f}"
-                                    cols[col_idx].image(img, caption=caption, use_column_width=True)
-                                    col_idx = (col_idx + 1) % 5
-                                    match_count += 1
-                                except Exception as e:
-                                    st.warning(f"⚠️ Skipped bad image: {e}")
-                                    continue
-
-                        except Exception as e:
-                            st.warning(f"⚠️ Failed to load image: {e}")
-                            continue
-
-            if match_count == 0:
-                st.warning("No visually matching images found. Try a broader keyword or lower threshold.")
-
-        except Exception as e:
-            st.error(f"❌ Search failed: {e}")
+        if matches == 0:
+            st.warning("No matches found. Try a broader keyword or lower threshold.")
